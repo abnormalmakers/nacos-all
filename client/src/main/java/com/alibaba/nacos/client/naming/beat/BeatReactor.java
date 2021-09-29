@@ -86,6 +86,7 @@ public class BeatReactor implements Closeable {
             existBeat.setStopped(true);
         }
         dom2Beat.put(key, beatInfo);
+        /** 添加一个定时任务，即定时发送心跳  BeatTask implements Runnable */
         executorService.schedule(new BeatTask(beatInfo), beatInfo.getPeriod(), TimeUnit.MILLISECONDS);
         MetricsMonitor.getDom2BeatSizeMonitor().set(dom2Beat.size());
     }
@@ -164,6 +165,7 @@ public class BeatReactor implements Closeable {
             }
             long nextTime = beatInfo.getPeriod();
             try {
+                /** 发送心跳 */
                 JsonNode result = serverProxy.sendBeat(beatInfo, BeatReactor.this.lightBeatEnabled);
                 long interval = result.get("clientBeatInterval").asLong();
                 boolean lightBeatEnabled = false;
@@ -199,6 +201,7 @@ public class BeatReactor implements Closeable {
                         JacksonUtils.toJson(beatInfo), ex.getErrCode(), ex.getErrMsg());
                 
             }
+            /** 定时执行心跳任务 */
             executorService.schedule(new BeatTask(beatInfo), nextTime, TimeUnit.MILLISECONDS);
         }
     }

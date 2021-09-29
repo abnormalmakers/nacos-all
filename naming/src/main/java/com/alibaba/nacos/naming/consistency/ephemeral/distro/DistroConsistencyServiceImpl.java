@@ -104,7 +104,10 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
     
     @Override
     public void put(String key, Record value) throws NacosException {
+        /** 将服务实例放入注册表 */
         onPut(key, value);
+
+        /**  集群同步 */
         distroProtocol.sync(new DistroKey(key, KeyBuilder.INSTANCE_LIST_KEY_PREFIX), DataOperation.CHANGE,
                 globalConfig.getTaskDispatchPeriod() / 2);
     }
@@ -139,7 +142,13 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
         if (!listeners.containsKey(key)) {
             return;
         }
-        
+        /**
+         * addTask 任务实际就是将新增的服务实例加入阻塞队列  tasks
+         * 而 notifier 本身是一个 Runnable 实现类对象，在当前公共类初始化的时候（@PostConstruct）
+         * 就开启了一条异步线程，异步线程则是一个 死循环，不停的从 tasks 中循环取出服务实例
+         * 在这之后只要有新的实例注册，就会调用这个 notifier.addTask 方法将实例放入 tasks 阻塞队列
+         * 而后台一直死循环的异步线程将会监听到消息处理新注册到 tasks 的任务
+         */
         notifier.addTask(key, DataOperation.CHANGE);
     }
     
@@ -366,6 +375,7 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
          * @param datumKey data key
          * @param action   action for data
          */
+        /** 队列中添加任务 */
         public void addTask(String datumKey, DataOperation action) {
             
             if (services.containsKey(datumKey) && action == DataOperation.CHANGE) {
@@ -374,6 +384,7 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
             if (action == DataOperation.CHANGE) {
                 services.put(datumKey, StringUtils.EMPTY);
             }
+            /** 往阻塞队列 tasks 中放入注册实例数据 */
             tasks.offer(Pair.with(datumKey, action));
         }
         
@@ -384,10 +395,17 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
         @Override
         public void run() {
             Loggers.DISTRO.info("distro notifier started");
-            
+
+            /**
+             *  这里开启了一条新的线程，异步，
+             * 死循环，是为了不停的从 tasks 阻塞队列中取出实例进行处理
+             * private BlockingQueue<Pair<String, DataOperation>> tasks = new ArrayBlockingQueue<>(1024 * 1024);
+             */
             for (; ; ) {
                 try {
+                    /** 循环从阻塞队列 tasks 中拿去实例数据并进行处理 */
                     Pair<String, DataOperation> pair = tasks.take();
+                    /** 从阻塞队列中拿到任务后执行 */
                     handle(pair);
                 } catch (Throwable e) {
                     Loggers.DISTRO.error("[NACOS-DISTRO] Error while handling notifying task", e);
@@ -414,6 +432,7 @@ public class DistroConsistencyServiceImpl implements EphemeralConsistencyService
                     
                     try {
                         if (action == DataOperation.CHANGE) {
+                            /** 当监听到注册任务时，会执行onChange方法 */
                             listener.onChange(datumKey, dataStore.get(datumKey).value);
                             continue;
                         }

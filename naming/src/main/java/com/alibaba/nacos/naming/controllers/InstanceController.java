@@ -262,7 +262,8 @@ public class InstanceController {
         String tenant = WebUtils.optional(request, "tid", StringUtils.EMPTY);
         
         boolean healthyOnly = Boolean.parseBoolean(WebUtils.optional(request, "healthyOnly", "false"));
-        
+
+        /** 根据命名空间id,服务名获取实例信息 */
         return doSrvIpxt(namespaceId, serviceName, agent, clusters, clientIP, udpPort, env, isCheck, app, tenant,
                 healthyOnly);
     }
@@ -337,9 +338,16 @@ public class InstanceController {
         if (StringUtils.isNotBlank(beat)) {
             clientBeat = JacksonUtils.toObj(beat, RsInfo.class);
         }
+        /**
+         * 从请求参数中获取 clusterName 的值
+         */
         String clusterName = WebUtils
                 .optional(request, CommonParams.CLUSTER_NAME, UtilsAndCommons.DEFAULT_CLUSTER_NAME);
+
+        /** 请求参数中获取 ip 的值 */
         String ip = WebUtils.optional(request, "ip", StringUtils.EMPTY);
+
+        /** 请求参数中获取 port 的值 */
         int port = Integer.parseInt(WebUtils.optional(request, "port", "0"));
         if (clientBeat != null) {
             if (StringUtils.isNotBlank(clientBeat.getCluster())) {
@@ -351,10 +359,19 @@ public class InstanceController {
             ip = clientBeat.getIp();
             port = clientBeat.getPort();
         }
+        /** 命名空间 默认public */
         String namespaceId = WebUtils.optional(request, CommonParams.NAMESPACE_ID, Constants.DEFAULT_NAMESPACE_ID);
+
+        /** 服务名称，格式为 组名@@服务名 */
         String serviceName = WebUtils.required(request, CommonParams.SERVICE_NAME);
+
+        /** 校验 serviceName 格式是否为 nacos 规定格式，避免手动向Server端发送错误心跳请求 */
         checkServiceNameFormat(serviceName);
         Loggers.SRV_LOG.debug("[CLIENT-BEAT] full arguments: beat: {}, serviceName: {}", clientBeat, serviceName);
+
+        /**
+         * 根据命名空间，serviceName 服务名，集群名 获取服务实例
+         * */
         Instance instance = serviceManager.getInstance(namespaceId, serviceName, clusterName, ip, port);
         
         if (instance == null) {
@@ -375,10 +392,17 @@ public class InstanceController {
             instance.setServiceName(serviceName);
             instance.setInstanceId(instance.getInstanceId());
             instance.setEphemeral(clientBeat.isEphemeral());
-            
+            /**
+             * 如果实例不存在，就根据 clientBeat 获取到的实例信息重新注册一个 instance
+             * 这里是应对如果网络不通导致实例在服务端被下架，或者服务端重启临时节点的服务实例丢失的问题
+             */
             serviceManager.registerInstance(namespaceId, serviceName, instance);
         }
-        
+        /**
+         * 获取服务信息
+         * Nacos 的数据模型为
+         * NameSpace(命名空间)--> Group(分组)-->service(服务) -->cluster(集群) -->instance(实例,封装了IP、端口、权重等信息)
+         */
         Service service = serviceManager.getService(namespaceId, serviceName);
         
         if (service == null) {
@@ -391,6 +415,9 @@ public class InstanceController {
             clientBeat.setPort(port);
             clientBeat.setCluster(clusterName);
         }
+        /**
+         * 开启一个心跳续约的线程，更新客户端实例的最后心跳时间
+         */
         service.processClientBeat(clientBeat);
         
         result.put(CommonParams.CODE, NamingResponseCode.OK);
@@ -543,13 +570,21 @@ public class InstanceController {
         
         ClientInfo clientInfo = new ClientInfo(agent);
         ObjectNode result = JacksonUtils.createEmptyJsonNode();
+        /** 从注册表中获取具体服务 */
         Service service = serviceManager.getService(namespaceId, serviceName);
         long cacheMillis = switchDomain.getDefaultCacheMillis();
         
         // now try to enable the push
+        /**
+         * 尝试启用推送
+         */
         try {
             if (udpPort > 0 && pushService.canEnablePush(agent)) {
-                
+                /**
+                 * 调用了pushService 组件的addClient 方法，这个pushService 组件主要就是用来进行推送的，
+                 * 比如我们订阅了某个服务，然后这个服务下面的实例信息发生了变化，
+                 * pushService组件就会通知所有的订阅客户端，将新的数据给客户端推过去。
+                 */
                 pushService
                         .addClient(namespaceId, serviceName, clusters, agent, new InetSocketAddress(clientIP, udpPort),
                                 pushDataSource, tid, app);
@@ -571,11 +606,12 @@ public class InstanceController {
             result.replace("hosts", JacksonUtils.createEmptyArrayNode());
             return result;
         }
-        
+        /** 检查服务是否禁用 */
         checkIfDisabled(service);
-        
+
         List<Instance> srvedIPs;
-        
+
+        /** 从服务中获取所有永久和临时服务实例 */
         srvedIPs = service.srvIPs(Arrays.asList(StringUtils.split(clusters, ",")));
         
         // filter ips using selector:

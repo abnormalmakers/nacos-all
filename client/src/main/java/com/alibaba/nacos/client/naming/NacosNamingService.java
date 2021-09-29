@@ -193,10 +193,13 @@ public class NacosNamingService implements NamingService {
     @Override
     public void registerInstance(String serviceName, String groupName, Instance instance) throws NacosException {
         String groupedServiceName = NamingUtils.getGroupedName(serviceName, groupName);
+        /** 实例是否是临时节点 ，默认为 true ，这里涉及到 AP CP */
         if (instance.isEphemeral()) {
             BeatInfo beatInfo = beatReactor.buildBeatInfo(groupedServiceName, instance);
+            /** 添加定时心跳任务 */
             beatReactor.addBeatInfo(groupedServiceName, beatInfo);
         }
+        /** 向 nacos 服务端注册 service 实例 */
         serverProxy.registerService(groupedServiceName, groupName, instance);
     }
     
@@ -277,16 +280,28 @@ public class NacosNamingService implements NamingService {
             throws NacosException {
         return getAllInstances(serviceName, Constants.DEFAULT_GROUP, clusters, subscribe);
     }
-    
+
+    /**
+     * 获取某个服务的实例列表 ------ 服务发现
+     * @param serviceName name of service 服务名
+     * @param groupName   group of service 组名
+     * @param clusters    list of cluster 集群
+     * @param subscribe   if subscribe the service 是否订阅 默认为 true
+     * @return
+     * @throws NacosException
+     */
     @Override
     public List<Instance> getAllInstances(String serviceName, String groupName, List<String> clusters,
             boolean subscribe) throws NacosException {
         
         ServiceInfo serviceInfo;
+        /** 默认为 true */
         if (subscribe) {
+            /** 如果订阅了服务，会先从本地缓存中获取，拿不到再去服务端远程获取 */
             serviceInfo = hostReactor.getServiceInfo(NamingUtils.getGroupedName(serviceName, groupName),
                     StringUtils.join(clusters, ","));
         } else {
+            /** 直接到远程服务端获取服务实例 */
             serviceInfo = hostReactor
                     .getServiceInfoDirectlyFromServer(NamingUtils.getGroupedName(serviceName, groupName),
                             StringUtils.join(clusters, ","));

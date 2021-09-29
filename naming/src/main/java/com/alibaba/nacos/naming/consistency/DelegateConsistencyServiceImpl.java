@@ -43,7 +43,6 @@ public class DelegateConsistencyServiceImpl implements ConsistencyService {
         this.ephemeralConsistencyService = ephemeralConsistencyService;
     }
     
-    @Override
     public void put(String key, Record value) throws NacosException {
         mapConsistencyService(key).put(key, value);
     }
@@ -82,6 +81,7 @@ public class DelegateConsistencyServiceImpl implements ConsistencyService {
     }
     
     private ConsistencyService mapConsistencyService(String key) {
+        /** 解析 key 是临时实例还是持久化实例 ，根据 key 返回不同 ConsistencyService 实现类 */
         return KeyBuilder.matchEphemeralKey(key) ? ephemeralConsistencyService : persistentConsistencyService;
     }
 }

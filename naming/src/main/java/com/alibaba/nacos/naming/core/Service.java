@@ -194,7 +194,11 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
                 instance.setWeight(0.01D);
             }
         }
-        
+        /**
+         * 将注册实例信息更新到注册表内存结构中去
+         * value.getInstanceList() ---- 即 List<Instance> instanceList = Instances.getInstanceList()
+         * KeyBuilder.matchEphemeralInstanceListKey(key) --- 布尔值，是临时还是持久化节点
+         */
         updateIPs(value.getInstanceList(), KeyBuilder.matchEphemeralInstanceListKey(key));
         
         recalculateChecksum();
@@ -231,7 +235,17 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
      * @param instances instances
      * @param ephemeral whether is ephemeral instance
      */
+    /**
+     *  nacos 这个更新注册表内存方法，为了防止读写并发冲突，大量运用了
+     *  CopyOnWrite 思想防止并发读写冲突，具体做法就是把原内存结构复制一份，
+     *  操作完最后再替换回真正的注册表内存,
+     */
     public void updateIPs(Collection<Instance> instances, boolean ephemeral) {
+        /**
+         * private Map<String, Cluster> clusterMap = new HashMap<>();
+         *         Map<String, List<Instance>> ipMap
+         *  ipMap key 是 service 的集群名称，value 是一个存放 Instance 的 List 集合
+         */
         Map<String, List<Instance>> ipMap = new HashMap<>(clusterMap.size());
         for (String clusterName : clusterMap.keySet()) {
             ipMap.put(clusterName, new ArrayList<>());
@@ -256,19 +270,26 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
                     cluster.init();
                     getClusterMap().put(instance.getClusterName(), cluster);
                 }
-                
+                /**
+                 * 操作刚才的 copy 的 ipMap，这时候拿到的是一个空的没有 Instance 的 List 集合
+                 */
                 List<Instance> clusterIPs = ipMap.get(instance.getClusterName());
                 if (clusterIPs == null) {
                     clusterIPs = new LinkedList<>();
                     ipMap.put(instance.getClusterName(), clusterIPs);
                 }
-                
+                /** 将 instance 实例添加进 clusterIPs */
                 clusterIPs.add(instance);
             } catch (Exception e) {
                 Loggers.SRV_LOG.error("[NACOS-DOM] failed to process ip: " + instance, e);
             }
         }
-        
+
+        /**
+         * 在这里循环刚才的  Map<String, List<Instance>> ipMap,
+         * 将得到的 List<Instance> 实例集合存放进注册表
+         * 到这里才是真正的将实例放入了注册表
+         */
         for (Map.Entry<String, List<Instance>> entry : ipMap.entrySet()) {
             //make every ip mine
             List<Instance> entryIPs = entry.getValue();
@@ -292,6 +313,12 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
      * Init service.
      */
     public void init() {
+        /**
+         * 服务健康检查，默认每 5s 发送一次心跳
+         * 创建一个健康检查的任务
+         * 如果某个实例超过15s没有收到心跳，则它的 healthy 属性则会被设为false
+         * 如果某个实例超过30s没有收到心跳，直接剔除该实例
+         */
         HealthCheckReactor.scheduleCheck(clientBeatCheckTask);
         for (Map.Entry<String, Cluster> entry : clusterMap.entrySet()) {
             entry.getValue().setService(this);

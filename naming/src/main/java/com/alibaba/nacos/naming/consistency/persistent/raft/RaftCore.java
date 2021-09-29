@@ -181,16 +181,16 @@ public class RaftCore {
      * @throws Exception any exception during publish
      */
     public void signalPublish(String key, Record value) throws Exception {
-        
+        /** 如果当前节点不是 leader，直接转发到 leader 节点*/
         if (!isLeader()) {
             ObjectNode params = JacksonUtils.createEmptyJsonNode();
             params.put("key", key);
             params.replace("value", JacksonUtils.transferToJsonNode(value));
             Map<String, String> parameters = new HashMap<>(1);
             parameters.put("key", key);
-            
+            /** 获取 leader 节点 */
             final RaftPeer leader = getLeader();
-            
+            /** 转发给主节点，只有主节点才能写数据 */
             raftProxy.proxyPostLarge(leader.ip, API_PUB, params.toString(), parameters);
             return;
         }
@@ -210,11 +210,14 @@ public class RaftCore {
             ObjectNode json = JacksonUtils.createEmptyJsonNode();
             json.replace("datum", JacksonUtils.transferToJsonNode(datum));
             json.replace("source", JacksonUtils.transferToJsonNode(peers.local()));
-            
+            /** 将实例写入硬盘，再写入内存 */
             onPublish(datum, peers.local());
             
             final String content = json.toString();
-            
+
+            /**
+             * 过半同步成功才会响应，也就是说put操作需要过半同步成功，强一致性 CP模型
+             */
             final CountDownLatch latch = new CountDownLatch(peers.majorityCount());
             for (final String server : peers.allServersIncludeMyself()) {
                 if (isLeader(server)) {
@@ -222,6 +225,7 @@ public class RaftCore {
                     continue;
                 }
                 final String url = buildUrl(server, API_ON_PUB);
+                /** 异步同步数据 */
                 HttpClient.asyncHttpPostLarge(url, Arrays.asList("key", key), content, new Callback<String>() {
                     @Override
                     public void onReceive(RestResult<String> result) {
@@ -347,19 +351,26 @@ public class RaftCore {
             throw new IllegalStateException(
                     "out of date publish, pub-term:" + source.term.get() + ", cur-term: " + local.term.get());
         }
-        
+        /** 重置选举时间 */
         local.resetLeaderDue();
-        
+
+
+        /**
+         * 检测 key 来判断是否是持久化实例,如果是就写入硬盘实现持久化
+         */
         // if data should be persisted, usually this is true:
         if (KeyBuilder.matchPersistentKey(datum.key)) {
+            /** 持久化实例，写入磁盘 */
             raftStore.write(datum);
         }
         
         datums.put(datum.key, datum);
         
         if (isLeader()) {
+            /** 如果是 leader 节点，就将本地的 term 值 +100*/
             local.term.addAndGet(PUBLISH_TERM_INCREASE_COUNT);
         } else {
+
             if (local.term.get() + PUBLISH_TERM_INCREASE_COUNT > source.term.get()) {
                 //set leader term:
                 getLeader().term.set(source.term.get());
@@ -368,8 +379,9 @@ public class RaftCore {
                 local.term.addAndGet(PUBLISH_TERM_INCREASE_COUNT);
             }
         }
+        /** 将 term 值写入文件 */
         raftStore.updateTerm(local.term.get());
-        
+        /** 将实例写入阻塞队列，然后异步线程从队列中取出实例 */
         notifier.addTask(datum.key, DataOperation.CHANGE);
         
         Loggers.RAFT.info("data added/updated, key={}, term={}", datum.key, local.term);
@@ -1071,7 +1083,7 @@ public class RaftCore {
             }
             
             Loggers.RAFT.info("add task {}", datumKey);
-            
+            /** 向阻塞队列里添加任务 */
             tasks.add(Pair.with(datumKey, action));
         }
         

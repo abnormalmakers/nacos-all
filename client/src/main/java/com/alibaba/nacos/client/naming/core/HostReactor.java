@@ -59,7 +59,7 @@ public class HostReactor implements Closeable {
     private static final long UPDATE_HOLD_INTERVAL = 5000L;
     
     private final Map<String, ScheduledFuture<?>> futureMap = new HashMap<String, ScheduledFuture<?>>();
-    
+    /** 客户端的缓存服务实例列表 */
     private final Map<String, ServiceInfo> serviceInfoMap;
     
     private final Map<String, Object> updatingMap;
@@ -140,7 +140,7 @@ public class HostReactor implements Closeable {
                 NAMING_LOGGER.warn("out of date data received, old-t: " + oldService.getLastRefTime() + ", new-t: "
                         + serviceInfo.getLastRefTime());
             }
-            
+            /**  本地缓存服务信息 */
             serviceInfoMap.put(serviceInfo.getKey(), serviceInfo);
             
             Map<String, Instance> oldHostMap = new HashMap<String, Instance>(oldService.getHosts().size());
@@ -221,7 +221,7 @@ public class HostReactor implements Closeable {
             serviceInfo.setJsonFromServer(json);
             DiskCache.write(serviceInfo, cacheDir);
         }
-        
+        /** 通过 prometheus-simpleclient 监控服务缓存 Map 的大小 */
         MetricsMonitor.getServiceInfoMapSizeMonitor().set(serviceInfoMap.size());
         
         if (changed) {
@@ -245,7 +245,7 @@ public class HostReactor implements Closeable {
     private ServiceInfo getServiceInfo0(String serviceName, String clusters) {
         
         String key = ServiceInfo.getKey(serviceName, clusters);
-        
+        /** serviceInfoMap 即是客户端缓存的服务实例列表 */
         return serviceInfoMap.get(key);
     }
     
@@ -265,15 +265,19 @@ public class HostReactor implements Closeable {
         if (failoverReactor.isFailoverSwitch()) {
             return failoverReactor.getService(key);
         }
-        
+        /** 在本地缓存中查询服务实例 */
         ServiceInfo serviceObj = getServiceInfo0(serviceName, clusters);
-        
+
+        /**
+         * 如果本地缓存没有，则请求注册中心，并更新本地缓存。
+         */
         if (null == serviceObj) {
             serviceObj = new ServiceInfo(serviceName, clusters);
             
             serviceInfoMap.put(serviceObj.getKey(), serviceObj);
             
             updatingMap.put(serviceName, new Object());
+            /** 从远程服务端拉取信息 */
             updateServiceNow(serviceName, clusters);
             updatingMap.remove(serviceName);
             
@@ -291,12 +295,17 @@ public class HostReactor implements Closeable {
                 }
             }
         }
-        
+        /** 生成定时任务，等一段时间再次执行更新操作 */
         scheduleUpdateIfAbsent(serviceName, clusters);
         
         return serviceInfoMap.get(serviceObj.getKey());
     }
-    
+
+    /**
+     * 更新服务信息
+     * @param serviceName
+     * @param clusters
+     */
     private void updateServiceNow(String serviceName, String clusters) {
         try {
             updateService(serviceName, clusters);
@@ -320,7 +329,7 @@ public class HostReactor implements Closeable {
             if (futureMap.get(ServiceInfo.getKey(serviceName, clusters)) != null) {
                 return;
             }
-            
+            /** 构建UpdateTask , UpdateTask implements Runnable */
             ScheduledFuture<?> future = addTask(new UpdateTask(serviceName, clusters));
             futureMap.put(ServiceInfo.getKey(serviceName, clusters), future);
         }
@@ -328,17 +337,18 @@ public class HostReactor implements Closeable {
     
     /**
      * Update service now.
-     *
+     * 更新服务
      * @param serviceName service name
      * @param clusters    clusters
      */
     public void updateService(String serviceName, String clusters) throws NacosException {
         ServiceInfo oldService = getServiceInfo0(serviceName, clusters);
         try {
-            
+            /** 请求服务端，获取服务列表 */
             String result = serverProxy.queryList(serviceName, clusters, pushReceiver.getUdpPort(), false);
             
             if (StringUtils.isNotEmpty(result)) {
+                /** ServiceInfo本地缓存处理 */
                 processServiceJson(result);
             }
         } finally {
@@ -409,15 +419,22 @@ public class HostReactor implements Closeable {
             long delayTime = DEFAULT_DELAY;
             
             try {
+                /**
+                 * 获取本地缓存的 service 信息
+                 */
                 ServiceInfo serviceObj = serviceInfoMap.get(ServiceInfo.getKey(serviceName, clusters));
-                
+                /** 如果缓存为空，向服务端发送请求，获取 service 信息 */
                 if (serviceObj == null) {
                     updateService(serviceName, clusters);
                     return;
                 }
-                
+                /**
+                 * 过期服务（服务的最新更新时间小于等于缓存刷新时间），从注册中心重新查询
+                 */
                 if (serviceObj.getLastRefTime() <= lastRefTime) {
+                    /** 远程请求最新服务信息，并更新到本地缓存 */
                     updateService(serviceName, clusters);
+                    /** 从本地缓存中获取刚刚更新的服务信息 */
                     serviceObj = serviceInfoMap.get(ServiceInfo.getKey(serviceName, clusters));
                 } else {
                     // if serviceName already updated by push, we should not override it
@@ -443,6 +460,7 @@ public class HostReactor implements Closeable {
                 incFailCount();
                 NAMING_LOGGER.warn("[NA] failed to update serviceName: " + serviceName, e);
             } finally {
+                /** 再次把自己放到任务调度列表中去，实现定时重复执行 */
                 executor.schedule(this, Math.min(delayTime << failCount, DEFAULT_DELAY * 60), TimeUnit.MILLISECONDS);
             }
         }

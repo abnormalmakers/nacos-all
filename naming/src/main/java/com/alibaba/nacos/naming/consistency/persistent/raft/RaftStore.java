@@ -258,7 +258,8 @@ public class RaftStore {
     public synchronized void write(final Datum datum) throws Exception {
         
         String namespaceId = KeyBuilder.getNamespace(datum.key);
-        
+
+        /** nacos 安装目录下的 data 下的 naming 文件夹*/
         File cacheFile = cacheFile(cacheFileName(namespaceId, datum.key));
         
         if (!cacheFile.exists() && !cacheFile.getParentFile().mkdirs() && !cacheFile.createNewFile()) {
@@ -274,6 +275,7 @@ public class RaftStore {
         
         try {
             fc = new FileOutputStream(cacheFile, false).getChannel();
+            /** 将实例节点持久化写入硬盘 */
             fc.write(data, data.position());
             fc.force(true);
         } catch (Exception e) {

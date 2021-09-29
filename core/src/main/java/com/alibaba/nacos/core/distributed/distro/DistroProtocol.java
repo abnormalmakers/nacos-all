@@ -101,9 +101,12 @@ public class DistroProtocol {
      */
     public void sync(DistroKey distroKey, DataOperation action, long delay) {
         for (Member each : memberManager.allMembersWithoutSelf()) {
+            /** 重新封装DistroKey ，然后将对方的地址封装进去 */
             DistroKey distroKeyWithTarget = new DistroKey(distroKey.getResourceKey(), distroKey.getResourceType(),
                     each.getAddress());
+            /** 封装延时task */
             DistroDelayTask distroDelayTask = new DistroDelayTask(distroKeyWithTarget, action, delay);
+            /** 添加延时任务 */
             distroTaskEngineHolder.getDelayTaskExecuteEngine().addTask(distroKeyWithTarget, distroDelayTask);
             if (Loggers.DISTRO.isDebugEnabled()) {
                 Loggers.DISTRO.debug("[DISTRO-SCHEDULE] {} to {}", distroKey, each.getAddress());

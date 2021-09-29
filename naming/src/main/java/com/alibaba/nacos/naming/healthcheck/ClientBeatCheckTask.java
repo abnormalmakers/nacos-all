@@ -86,15 +86,23 @@ public class ClientBeatCheckTask implements Runnable {
             
             // first set health status of instances:
             for (Instance instance : instances) {
+                /**
+                 * 判断最后心跳时间是否超过 15s
+                 */
                 if (System.currentTimeMillis() - instance.getLastBeat() > instance.getInstanceHeartBeatTimeOut()) {
                     if (!instance.isMarked()) {
                         if (instance.isHealthy()) {
+                            /** 修改实例健康状态 */
                             instance.setHealthy(false);
                             Loggers.EVT_LOG
                                     .info("{POS} {IP-DISABLED} valid: {}:{}@{}@{}, region: {}, msg: client timeout after {}, last beat: {}",
                                             instance.getIp(), instance.getPort(), instance.getClusterName(),
                                             service.getName(), UtilsAndCommons.LOCALHOST_SITE,
                                             instance.getInstanceHeartBeatTimeOut(), instance.getLastBeat());
+                            /**
+                             * 发布一个ServiceChangeEvent事件，
+                             * PushService监听器中onApplicationEvent方法将会执行
+                             */
                             getPushService().serviceChanged(service);
                             ApplicationUtils.publishEvent(new InstanceHeartbeatTimeoutEvent(this, instance));
                         }
@@ -112,11 +120,16 @@ public class ClientBeatCheckTask implements Runnable {
                 if (instance.isMarked()) {
                     continue;
                 }
-                
+                /**
+                 * 判断最后心跳时间是否超过 30s
+                 */
                 if (System.currentTimeMillis() - instance.getLastBeat() > instance.getIpDeleteTimeout()) {
                     // delete instance
                     Loggers.SRV_LOG.info("[AUTO-DELETE-IP] service: {}, ip: {}", service.getName(),
                             JacksonUtils.toJson(instance));
+                    /**
+                     * 删除实例
+                     */
                     deleteIp(instance);
                 }
             }
@@ -139,6 +152,7 @@ public class ClientBeatCheckTask implements Runnable {
                     + UtilsAndCommons.NACOS_NAMING_CONTEXT + "/instance?" + request.toUrl();
             
             // delete instance asynchronously:
+            /** 发送剔除请求 */
             HttpClient.asyncHttpDelete(url, null, null, new Callback<String>() {
                 @Override
                 public void onReceive(RestResult<String> result) {
